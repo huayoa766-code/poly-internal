@@ -1,0 +1,37 @@
+name: alert-worker
+
+# Runs one alert pass on a schedule (this is the "backend worker").
+# Scheduled workflows run only on the default branch and use UTC; GitHub may
+# delay them under load. */15 is the practical floor for useful price alerts.
+#
+# Minutes note: PUBLIC repos get unlimited Actions minutes. PRIVATE repos get
+# ~2000 free min/month — */15 will exceed that, so for a private repo either
+# raise the interval (e.g. '0 * * * *' hourly) or make the repo public.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # manual "Run workflow" button
+
+concurrency:
+  group: alert-worker
+  cancel-in-progress: false
+
+jobs:
+  pass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run pass
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PRICE_MOVE_THRESHOLD: "0.05"
+          DEADLINE_HOURS: "24"
+          NEWS_TIMESPAN: "1h"

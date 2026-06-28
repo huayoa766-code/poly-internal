@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Poly Tracker
 
-## Getting Started
+Internal tool to **bookmark Polymarket markets**, organize them by category, and get
+**Telegram alerts** on price moves, deadlines, and relevant news. Built for a
+geopolitics-focused watchlist.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router) — dashboard + market search UI
+- **Prisma + SQLite** — local storage (swap to Postgres for deploy)
+- **node-cron worker** — polls bookmarks, detects moves, fetches news, sends alerts
+- **GDELT** (free) for news; **Telegram Bot API** for notifications
+
+No trading credentials are used — the tool only reads public market data and notifies.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env        # then edit .env
+npx prisma migrate dev      # create the SQLite db
+npm run dev                 # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Add bookmarks
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Find markets** tab → search and bookmark, **or**
+- Dashboard → **Import from Polymarket** → paste watchlist URLs (one per line).
+  An event URL imports all of its markets. (Polymarket's account watchlist has no
+  public API, so paste-import is the supported path.)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Notifications (Telegram)
 
-## Learn More
+1. In Telegram, message **@BotFather** → `/newbot` → copy the **bot token**.
+2. Send your new bot any message (e.g. "hi").
+3. Get your **chat id**:
+   ```bash
+   curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"
+   # look for "chat":{"id":<NUMBER> ...
+   ```
+4. Put both in `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN="123:abc..."
+   TELEGRAM_CHAT_ID="123456789"
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+Without these, the worker runs in **dry-run** (alerts print to the console).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Running the alert worker
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run worker     # long-running: alert pass every 15 min + daily digest at 09:00
+npm run pass       # run a single pass once (handy for testing)
+```
 
-## Deploy on Vercel
+Tuning lives in `.env` (`PRICE_MOVE_THRESHOLD`, `DEADLINE_HOURS`, `NEWS_TIMESPAN`,
+`POLL_CRON`, `DIGEST_CRON`).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Alert types
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Type | Fires when |
+|------|------------|
+| Price move | primary outcome moves ≥ `PRICE_MOVE_THRESHOLD` (default 5 pts) vs last snapshot |
+| Deadline | market closes within `DEADLINE_HOURS` |
+| Resolution | market flips to closed |
+| News | fresh GDELT headlines match auto-extracted keywords |
+| Daily digest | once a day, summary of all tracked markets |
+
+Duplicate alerts are suppressed via the `SentAlert` dedupe log.
+
+## Notes / limits
+
+- **GDELT** rate-limits to 1 request / 5s; the client throttles + retries automatically.
+- News matching is **keyword-only** (no LLM) — fast but occasionally noisy. An LLM
+  relevance pass and X/Twitter sentiment are designed-for but not yet built.
+- Polymarket's API was occasionally unreachable from some networks (transient, not a
+  hard geo-block).

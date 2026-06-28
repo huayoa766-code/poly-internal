@@ -1,0 +1,103 @@
+// Polymarket bookmark tracker — data model
+// SQLite for local dev; swap `provider = "postgresql"` + DATABASE_URL to deploy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A Polymarket market the user has bookmarked to track.
+model Bookmark {
+  id         String   @id @default(cuid())
+  marketId   String   @unique // Polymarket Gamma market id
+  slug       String
+  question   String
+  // Polymarket's own category, if any (e.g. "Politics", "Crypto")
+  pmCategory String?
+  endDate    DateTime?
+  // JSON-encoded arrays from Gamma: outcomes ["Yes","No"], prices ["0.62","0.38"]
+  outcomes   String?
+  note       String?
+  closed     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tags      BookmarkTag[]
+  snapshots PriceSnapshot[]
+  rules     AlertRule[]
+
+  @@index([endDate])
+}
+
+/// User-defined label (news topic / category) for organizing bookmarks.
+model Category {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  color     String?
+  createdAt DateTime      @default(now())
+  bookmarks BookmarkTag[]
+}
+
+/// Many-to-many join between bookmarks and user categories.
+model BookmarkTag {
+  bookmark   Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId String
+
+  @@id([bookmarkId, categoryId])
+}
+
+/// Point-in-time price/probability capture for a bookmarked market.
+model PriceSnapshot {
+  id         String   @id @default(cuid())
+  bookmark   Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  outcome    String // e.g. "Yes"
+  price      Float // 0..1 probability
+  capturedAt DateTime @default(now())
+
+  @@index([bookmarkId, capturedAt])
+}
+
+/// Per-bookmark alert configuration.
+model AlertRule {
+  id         String   @id @default(cuid())
+  bookmark   Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  type       String // "price" | "deadline" | "digest"
+  // For price: absolute probability move threshold (e.g. 0.05 = 5pts).
+  // For deadline: hours-before-close to fire (e.g. 24).
+  threshold  Float?
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([bookmarkId, type])
+  @@index([bookmarkId])
+}
+
+/// Saved keyword/category filter that drives "new matching markets" alerts.
+model WatchQuery {
+  id         String   @id @default(cuid())
+  label      String
+  keyword    String? // matched against market question/title
+  pmCategory String?
+  enabled    Boolean  @default(true)
+  // JSON array of market ids already seen, so we only alert on new ones.
+  seenIds    String   @default("[]")
+  createdAt  DateTime @default(now())
+}
+
+/// Dedupe log: records each alert already delivered.
+model SentAlert {
+  id        String   @id @default(cuid())
+  // Stable key per event, e.g. "price:<bookmarkId>:<bucket>" or "deadline:<id>:24h"
+  dedupeKey String   @unique
+  channel   String   @default("telegram")
+  payload   String?
+  sentAt    DateTime @default(now())
+}
