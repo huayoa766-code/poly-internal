@@ -35,3 +35,5 @@ jobs:
           PRICE_MOVE_THRESHOLD: "0.05"
           DEADLINE_HOURS: "24"
           NEWS_TIMESPAN: "1h"
+
+# (re-indexed after enabling Actions)
