@@ -1,0 +1,25 @@
+name: migrate
+
+# Applies Prisma migrations to the production database.
+# Runs automatically when migrations change on master, and can be run manually
+# (Actions tab -> migrate -> Run workflow) e.g. for the very first setup.
+on:
+  push:
+    branches: [master]
+    paths: ["prisma/migrations/**", "prisma/schema.prisma"]
+  workflow_dispatch: {}
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

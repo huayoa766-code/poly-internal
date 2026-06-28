@@ -1,0 +1,2 @@
+# Keep Prisma migration SQL byte-identical across OSes so checksums match.
+prisma/migrations/**/*.sql text eol=lf

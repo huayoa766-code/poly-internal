@@ -19,11 +19,11 @@ optional but lets you open the dashboard from your phone.
 2. Copy the **connection string** (use the **direct** one, i.e. the host *without*
    `-pooler`). It looks like:
    `postgresql://user:pass@ep-xxx.aws.neon.tech/neondb?sslmode=require`
-3. Put it in your local `.env` as `DATABASE_URL`, then create the schema:
-   ```bash
-   npx prisma migrate deploy
-   ```
-4. (Optional) re-import your watchlist on the dashboard once deployed.
+3. Put it in your local `.env` as `DATABASE_URL`.
+
+The schema is created by the **migrate** GitHub Action (step 3 below) — no local
+DB command needed. (If you ever want to run it by hand from your own machine:
+`npx prisma migrate deploy`.)
 
 ## 2. Push to GitHub
 
@@ -38,7 +38,7 @@ optional but lets you open the dashboard from your phone.
    git push -u origin master
    ```
 
-## 3. GitHub Secrets (for the worker)
+## 3. GitHub Secrets + create the schema
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**. Add:
 
@@ -46,8 +46,12 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
-Then test it: **Actions → alert-worker → Run workflow**. You should get Telegram
-alerts (or a clean run if nothing has moved).
+Now create the database schema: **Actions → migrate → Run workflow**. It runs
+`prisma migrate deploy` against Neon. (It also runs automatically whenever you push
+migration changes.)
+
+Then test the worker: **Actions → alert-worker → Run workflow** — you should get
+Telegram alerts (or a clean run if nothing has moved).
 
 ## 4. UI — Vercel
 
