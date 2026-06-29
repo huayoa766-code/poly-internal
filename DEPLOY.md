@@ -57,7 +57,9 @@ Telegram alerts (or a clean run if nothing has moved).
 
 1. <https://vercel.com> → sign in with GitHub → **Add New… → Project** → import the repo.
 2. **Environment Variables** — add the same three (`DATABASE_URL`,
-   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`).
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`), plus **`DASHBOARD_PIN`** (a 6-digit
+   PIN) and **`AUTH_SECRET`** (any long random string) to lock the public URL —
+   see below.
 3. **Deploy**. Vercel auto-runs `prisma generate` (via `postinstall`) and builds.
 
 Your dashboard is now at `https://<project>.vercel.app`.
@@ -66,6 +68,13 @@ Your dashboard is now at `https://<project>.vercel.app`.
 
 ### Notes
 
+- **PIN-locking the dashboard.** Because the Vercel URL is public, set
+  `DASHBOARD_PIN` (6 digits) and `AUTH_SECRET` (a long random string) in the
+  Vercel env. Every request is then bounced to a `/login` popup until the PIN is
+  entered; a signed, http-only cookie keeps you in for 30 days, and **🔒 Lock**
+  in the header clears it. Rotating `DASHBOARD_PIN` invalidates existing
+  sessions. Leave `DASHBOARD_PIN` blank to disable the gate (e.g. local dev).
+  The worker doesn't serve the UI, so it needs neither var.
 - Scheduled GitHub Actions use **UTC** and may be delayed a few minutes under load.
 - The worker runs `npm run pass` (one pass, then exits) — not the long-running
   `npm run worker`. The daily digest is a separate workflow (`digest.yml`).

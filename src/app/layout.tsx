@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { AUTH_COOKIE, authEnabled, isValidToken } from "@/lib/auth";
+import { logout } from "./login/actions";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,11 +21,15 @@ export const metadata: Metadata = {
   description: "Internal Polymarket bookmark tracker",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const authed = authEnabled()
+    ? isValidToken((await cookies()).get(AUTH_COOKIE)?.value)
+    : false;
+
   return (
     <html
       lang="en"
@@ -41,6 +48,16 @@ export default function RootLayout({
               Find markets
             </Link>
           </nav>
+          {authed && (
+            <form action={logout} className="ml-auto">
+              <button
+                type="submit"
+                className="text-sm text-neutral-400 hover:text-neutral-100"
+              >
+                🔒 Lock
+              </button>
+            </form>
+          )}
         </header>
         <main className="flex-1 px-6 py-6 max-w-5xl w-full mx-auto">{children}</main>
       </body>
