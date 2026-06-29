@@ -22,5 +22,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Optional: "split" sends one digest message per category (default is
+          # one combined message with a section per category).
+          DIGEST_MODE: ${{ secrets.DIGEST_MODE }}
+          # Optional: JSON map of category label -> forum topic thread id.
+          # When set, the digest splits and each category posts to its topic.
+          TELEGRAM_TOPICS: ${{ secrets.TELEGRAM_TOPICS }}
 
 # (re-indexed after enabling Actions)

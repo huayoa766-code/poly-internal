@@ -71,5 +71,16 @@ Your dashboard is now at `https://<project>.vercel.app`.
   `npm run worker`. The daily digest is a separate workflow (`digest.yml`).
 - To change alert tuning in production, edit the `env:` block in
   `.github/workflows/worker.yml` (`PRICE_MOVE_THRESHOLD`, `DEADLINE_HOURS`, …).
+- **Telegram messages are organized by category** (from each market's Polymarket
+  tags). The daily digest is split into category sections with recurring
+  date-variants collapsed under their series, and each alert is tagged with its
+  category. Optional secrets to customize delivery:
+  - `DIGEST_MODE=split` — send one digest message per category instead of one
+    combined message.
+  - `TELEGRAM_TOPICS` — JSON map of category → forum topic id, e.g.
+    `{"Crypto":12,"Politics":8}`. Requires the group to have **Topics** enabled
+    (make it a forum); each category's digest + alerts then post to its topic.
+    Setting this auto-enables per-category split. Get a topic's id from the
+    `message_thread_id` of any message in that topic (or via `getUpdates`).
 - Local dev now also needs a Postgres `DATABASE_URL` (use your Neon string, or a
   Neon dev branch).
