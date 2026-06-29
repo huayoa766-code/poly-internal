@@ -44,12 +44,15 @@ export default async function Dashboard({
   const q = (sp.q ?? "").trim();
   const activeTag = sp.tag ?? null;
   const sort: SortKey = SORTS.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "ending";
-  const cat = sp.cat ?? null;
 
   const [bookmarks, categories] = await Promise.all([
     loadBookmarks(),
     prisma.category.findMany({ orderBy: { name: "asc" } }),
   ]);
+
+  // Ignore a stale ?cat= filter (e.g. the category was just deleted) so we never
+  // render an empty list for a category that no longer exists.
+  const cat = sp.cat && categories.some((c) => c.id === sp.cat) ? sp.cat : null;
 
   // Predefined tag options (counts across all bookmarks), most common first.
   const tagCounts = new Map<string, number>();
