@@ -13,8 +13,16 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const AUTH_COOKIE = "poly_auth";
 
-// Bound into every token so changing it (e.g. PIN rotation) invalidates old sessions.
-const TOKEN_MESSAGE = "poly-internal-auth-v1";
+/**
+ * How long a session stays valid after logging in, in hours (default 12).
+ * The cookie itself is session-scoped (cleared when the browser session ends),
+ * and the token also carries this hard expiry the server enforces — so the PIN
+ * is required again each new session, and at the latest after this window.
+ */
+function sessionTtlMs(): number {
+  const hours = Number(process.env.SESSION_TTL_HOURS);
+  return (Number.isFinite(hours) && hours > 0 ? hours : 12) * 3_600_000;
+}
 
 /** The configured PIN, or null when auth is disabled (no PIN set). */
 export function getConfiguredPin(): string | null {
@@ -37,9 +45,17 @@ function signingKey(): string {
   return `${secret}:${getConfiguredPin() ?? ""}`;
 }
 
-/** Opaque token stored in the auth cookie once a correct PIN is entered. */
-export function sessionToken(): string {
-  return createHmac("sha256", signingKey()).update(TOKEN_MESSAGE).digest("hex");
+function sign(payload: string): string {
+  return createHmac("sha256", signingKey()).update(payload).digest("hex");
+}
+
+/**
+ * Build a fresh session token: an expiry timestamp signed with the PIN-bound
+ * key. Format: `<expiryMs>.<hmac>`. Each login mints a new one.
+ */
+export function createSessionToken(now: number = Date.now()): string {
+  const exp = String(now + sessionTtlMs());
+  return `${exp}.${sign(exp)}`;
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -50,10 +66,16 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-/** Validate a cookie token against the expected one (constant time). */
+/** Validate a session token: signature must verify and it must not be expired. */
 export function isValidToken(token: string | undefined): boolean {
   if (!token) return false;
-  return safeEqual(token, sessionToken());
+  const dot = token.indexOf(".");
+  if (dot < 1) return false;
+  const exp = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!safeEqual(sig, sign(exp))) return false; // constant-time signature check
+  const expMs = Number(exp);
+  return Number.isFinite(expMs) && expMs > Date.now();
 }
 
 /** Constant-time check of a submitted PIN against the configured one. */

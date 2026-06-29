@@ -5,11 +5,9 @@ import { redirect } from "next/navigation";
 import {
   AUTH_COOKIE,
   authEnabled,
+  createSessionToken,
   pinMatches,
-  sessionToken,
 } from "@/lib/auth";
-
-const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 export type LoginState = { error?: string };
 
@@ -26,12 +24,14 @@ export async function login(
   }
 
   const store = await cookies();
-  store.set(AUTH_COOKIE, sessionToken(), {
+  // No maxAge/expires => a session cookie: the browser drops it when the
+  // session ends, so a new session must re-enter the PIN. The token also
+  // carries a server-enforced expiry as a backstop (see createSessionToken).
+  store.set(AUTH_COOKIE, createSessionToken(), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: MAX_AGE,
   });
 
   redirect(safeNext(String(formData.get("next") ?? "")));

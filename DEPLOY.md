@@ -71,10 +71,13 @@ Your dashboard is now at `https://<project>.vercel.app`.
 - **PIN-locking the dashboard.** Because the Vercel URL is public, set
   `DASHBOARD_PIN` (6 digits) and `AUTH_SECRET` (a long random string) in the
   Vercel env. Every request is then bounced to a `/login` popup until the PIN is
-  entered; a signed, http-only cookie keeps you in for 30 days, and **🔒 Lock**
-  in the header clears it. Rotating `DASHBOARD_PIN` invalidates existing
-  sessions. Leave `DASHBOARD_PIN` blank to disable the gate (e.g. local dev).
-  The worker doesn't serve the UI, so it needs neither var.
+  entered. The login is **per session** — a signed, http-only session cookie on
+  that one device that clears when the browser session ends, and the token also
+  expires server-side after `SESSION_TTL_HOURS` (default 12). **🔒 Lock** in the
+  header logs out, and rotating `DASHBOARD_PIN` invalidates existing sessions.
+  After adding/removing these vars you must **redeploy** for it to take effect.
+  Leave `DASHBOARD_PIN` blank to disable the gate (e.g. local dev). The worker
+  doesn't serve the UI, so it needs neither var.
 - Scheduled GitHub Actions use **UTC** and may be delayed a few minutes under load.
 - The worker runs `npm run pass` (one pass, then exits) — not the long-running
   `npm run worker`. The daily digest is a separate workflow (`digest.yml`).

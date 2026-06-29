@@ -29,6 +29,36 @@ npm run dev                 # http://localhost:3000
   An event URL imports all of its markets. (Polymarket's account watchlist has no
   public API, so paste-import is the supported path.)
 
+## Locking the dashboard (PIN)
+
+The UI sits behind a single **6-digit PIN** so exposing the URL alone can't open
+or tamper with the dashboard. Set it in `.env` (never hardcoded):
+
+```
+DASHBOARD_PIN="123456"     # the 6-digit PIN; leave blank to disable the lock
+AUTH_SECRET="<random>"     # signs the login cookie; any long random string
+SESSION_TTL_HOURS="12"     # how long a login lasts before re-prompting (optional)
+```
+
+Generate a secret with:
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+
+With a PIN set, every request is redirected to a `/login` popup until the PIN is
+entered. The login is **per session**: it's stored in a signed, http-only
+**session cookie** on that one device, so it survives reloads but is cleared when
+the browser session ends — and the token also expires server-side after
+`SESSION_TTL_HOURS` (default 12). **🔒 Lock** in the header logs out immediately.
+Rotating `DASHBOARD_PIN` invalidates existing sessions.
+
+The login lives only in that device's cookie — **it is not in the URL**, so
+sharing the link does *not* unlock it on another phone; each device must enter
+the PIN. (If a device opens already unlocked, the gate is off — i.e.
+`DASHBOARD_PIN` isn't set on that deployment.)
+
+Leave `DASHBOARD_PIN` blank to disable the lock (e.g. local dev). The worker
+serves no UI, so it needs neither variable. In production, set these as
+environment variables (e.g. on Vercel) and redeploy — see [DEPLOY.md](DEPLOY.md).
+
 ## Notifications (Telegram)
 
 1. In Telegram, message **@BotFather** → `/newbot` → copy the **bot token**.
