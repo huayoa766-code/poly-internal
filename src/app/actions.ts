@@ -82,6 +82,12 @@ export async function createCategory(name: string, color?: string) {
   revalidatePath("/");
 }
 
+/** Delete a manual category (removes it from every bookmark it tagged). */
+export async function deleteCategory(categoryId: string) {
+  await prisma.category.delete({ where: { id: categoryId } });
+  revalidatePath("/");
+}
+
 /** Toggle a category on a bookmark. */
 export async function toggleBookmarkCategory(bookmarkId: string, categoryId: string) {
   const existing = await prisma.bookmarkTag.findUnique({

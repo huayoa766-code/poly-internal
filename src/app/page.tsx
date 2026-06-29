@@ -10,6 +10,7 @@ import {
 } from "@/components/DashboardControls";
 import { SeriesGroup } from "@/components/SeriesGroup";
 import { BackfillButton } from "@/components/BackfillButton";
+import { ManualLabels } from "@/components/ManualLabels";
 
 export const dynamic = "force-dynamic";
 
@@ -220,31 +221,10 @@ export default async function Dashboard({
         </summary>
         <div className="mt-3 space-y-3">
           <CreateCategory />
-          {categories.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 text-xs">
-              <Link
-                href="/"
-                className={`rounded-full border px-2 py-0.5 ${
-                  !cat ? "border-neutral-300 text-neutral-100" : "border-neutral-700 text-neutral-500"
-                }`}
-              >
-                All
-              </Link>
-              {categories.map((c) => (
-                <Link
-                  key={c.id}
-                  href={`/?cat=${c.id}`}
-                  className={`rounded-full border px-2 py-0.5 ${
-                    cat === c.id
-                      ? "border-emerald-500 text-emerald-300"
-                      : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
-                  }`}
-                >
-                  {c.name}
-                </Link>
-              ))}
-            </div>
-          )}
+          <ManualLabels
+            categories={categories.map((c) => ({ id: c.id, name: c.name }))}
+            activeCat={cat}
+          />
         </div>
       </details>
     </div>
