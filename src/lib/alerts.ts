@@ -16,6 +16,7 @@ import { extractKeywords, buildNewsQuery } from "./keywords";
 import { fetchNews } from "./gdelt";
 import { sendTelegram, telegramConfigured, topicFor, topicsConfigured } from "./telegram";
 import { categoryOf, categoryOrder, type Category } from "./categories";
+import { cleanupEndedBookmarks, isEnded } from "./lifecycle";
 
 const PRICE_THRESHOLD = Number(process.env.PRICE_MOVE_THRESHOLD ?? "0.05"); // 5 points
 const DEADLINE_HOURS = Number(process.env.DEADLINE_HOURS ?? "24");
@@ -27,6 +28,8 @@ export interface PassStats {
   priceAlerts: number;
   deadlineAlerts: number;
   newsAlerts: number;
+  /** Ended bookmarks hard-deleted this pass (past the grace window). */
+  removed: number;
   errors: string[];
 }
 
@@ -63,8 +66,17 @@ export async function runAlertPass(): Promise<PassStats> {
     priceAlerts: 0,
     deadlineAlerts: 0,
     newsAlerts: 0,
+    removed: 0,
     errors: [],
   };
+
+  // Reap long-ended bookmarks before doing any work, so we never spend a fetch
+  // or fire an alert on a market that's about to be deleted.
+  try {
+    stats.removed = await cleanupEndedBookmarks();
+  } catch (e) {
+    stats.errors.push(`cleanup: ${(e as Error).message}`);
+  }
 
   const bookmarks = await prisma.bookmark.findMany({
     where: { closed: false },
@@ -91,8 +103,13 @@ export async function runAlertPass(): Promise<PassStats> {
       const ctx = contextLine(cat, bm.seriesTitle);
       const threadId = topicFor(cat.label);
 
-      // --- price snapshot (always recorded for history) + move detection ---
-      if (primary) {
+      // Past its end date: it's hidden from the dashboard and awaiting deletion,
+      // so don't snapshot prices or fire price/news alerts on it. Resolution is
+      // still worth announcing, so that branch runs below regardless.
+      const ended = isEnded(bm.endDate);
+
+      // --- price snapshot (recorded for history) + move detection ---
+      if (primary && !ended) {
         const prev = await prisma.priceSnapshot.findFirst({
           where: { bookmarkId: bm.id, outcome: primary.name },
           orderBy: { capturedAt: "desc" },
@@ -133,7 +150,7 @@ export async function runAlertPass(): Promise<PassStats> {
       }
 
       // --- news (keyword match via GDELT) ---
-      const keywords = enabled("news") ? extractKeywords(bm.question) : [];
+      const keywords = enabled("news") && !ended ? extractKeywords(bm.question) : [];
       if (keywords.length) {
         const articles = await fetchNews(buildNewsQuery(keywords), {
           timespan: NEWS_TIMESPAN,

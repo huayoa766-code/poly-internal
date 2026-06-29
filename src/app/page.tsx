@@ -11,6 +11,7 @@ import {
 import { SeriesGroup } from "@/components/SeriesGroup";
 import { BackfillButton } from "@/components/BackfillButton";
 import { ManualLabels } from "@/components/ManualLabels";
+import { isEnded, ENDED_GRACE_DAYS } from "@/lib/lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -45,10 +46,17 @@ export default async function Dashboard({
   const activeTag = sp.tag ?? null;
   const sort: SortKey = SORTS.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "ending";
 
-  const [bookmarks, categories] = await Promise.all([
+  const [allBookmarks, categories] = await Promise.all([
     loadBookmarks(),
     prisma.category.findMany({ orderBy: { name: "asc" } }),
   ]);
+
+  // Ended markets (past their end date) drop out of the main list immediately;
+  // they linger in a collapsible "Recently ended" section until the worker
+  // hard-deletes them after the grace window.
+  const now = new Date();
+  const bookmarks = allBookmarks.filter((b) => !isEnded(b.endDate, now));
+  const ended = allBookmarks.filter((b) => isEnded(b.endDate, now));
 
   // Ignore a stale ?cat= filter (e.g. the category was just deleted) so we never
   // render an empty list for a category that no longer exists.
@@ -184,7 +192,7 @@ export default async function Dashboard({
 
       {entries.length === 0 ? (
         <p className="text-sm text-neutral-400">
-          {bookmarks.length === 0 ? (
+          {allBookmarks.length === 0 ? (
             <>
               No bookmarks yet.{" "}
               <Link href="/search" className="underline">
@@ -216,6 +224,21 @@ export default async function Dashboard({
             ),
           )}
         </ul>
+      )}
+
+      {ended.length > 0 && (
+        <details className="text-sm text-neutral-500">
+          <summary className="cursor-pointer hover:text-neutral-300">
+            Recently ended ({ended.length}) — auto-removed {ENDED_GRACE_DAYS}d after closing
+          </summary>
+          <ul className="mt-3 space-y-3 opacity-70">
+            {ended
+              .sort((a, b) => endMs(b) - endMs(a)) // most recently ended first
+              .map((row) => (
+                <BookmarkCard key={row.id} data={toCard(row)} />
+              ))}
+          </ul>
+        </details>
       )}
 
       <details className="text-sm text-neutral-500">

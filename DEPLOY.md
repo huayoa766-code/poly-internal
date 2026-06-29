@@ -71,6 +71,11 @@ Your dashboard is now at `https://<project>.vercel.app`.
   `npm run worker`. The daily digest is a separate workflow (`digest.yml`).
 - To change alert tuning in production, edit the `env:` block in
   `.github/workflows/worker.yml` (`PRICE_MOVE_THRESHOLD`, `DEADLINE_HOURS`, …).
+- **Ended markets self-clean.** A bookmark whose end date has passed disappears
+  from the dashboard immediately (kept in a collapsible "Recently ended"
+  section) and is hard-deleted by the next worker pass once it's been ended for
+  `ENDED_GRACE_DAYS` days (default 7). Set `ENDED_GRACE_DAYS` in
+  `worker.yml`'s `env:` to change the window.
 - **Telegram messages are organized by category** (from each market's Polymarket
   tags). The daily digest is split into category sections with recurring
   date-variants collapsed under their series, and each alert is tagged with its
