@@ -11,6 +11,7 @@
     "worker": "tsx worker/index.ts",
     "pass": "tsx worker/pass.ts",
     "digest": "tsx worker/digest.ts",
+    "backfill": "tsx worker/backfill.ts",
     "telegram:test": "tsx worker/telegram-test.ts",
     "telegram:chatid": "tsx worker/chat-id.ts"
   },

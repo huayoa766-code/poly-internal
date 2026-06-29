@@ -1,0 +1,21 @@
+name: backfill-grouping
+
+# Manually-triggered: fills in series/event/tag grouping for bookmarks created
+# before grouping existed (re-fetches each from Polymarket). Safe to re-run.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run backfill
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

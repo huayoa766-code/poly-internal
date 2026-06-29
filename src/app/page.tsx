@@ -3,36 +3,84 @@ import { prisma } from "@/lib/db";
 import { BookmarkCard, type CardData } from "@/components/BookmarkCard";
 import { CreateCategory } from "@/components/CreateCategory";
 import { ImportBox } from "@/components/ImportBox";
+import {
+  DashboardControls,
+  type SortKey,
+  type TagOption,
+} from "@/components/DashboardControls";
+import { SeriesGroup } from "@/components/SeriesGroup";
+import { BackfillButton } from "@/components/BackfillButton";
 
 export const dynamic = "force-dynamic";
+
+type BookmarkRow = Awaited<ReturnType<typeof loadBookmarks>>[number];
+
+function loadBookmarks() {
+  return prisma.bookmark.findMany({
+    orderBy: [{ endDate: "asc" }],
+    include: { tags: true, rules: true },
+  });
+}
+
+function parseTags(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+const SORTS: SortKey[] = ["ending", "recent", "az"];
 
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ cat?: string }>;
+  searchParams: Promise<{ q?: string; tag?: string; sort?: string; cat?: string }>;
 }) {
-  const { cat } = await searchParams;
+  const sp = await searchParams;
+  const q = (sp.q ?? "").trim();
+  const activeTag = sp.tag ?? null;
+  const sort: SortKey = SORTS.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "ending";
+  const cat = sp.cat ?? null;
 
   const [bookmarks, categories] = await Promise.all([
-    prisma.bookmark.findMany({
-      orderBy: [{ endDate: "asc" }],
-      include: { tags: true, rules: true },
-    }),
+    loadBookmarks(),
     prisma.category.findMany({ orderBy: { name: "asc" } }),
   ]);
 
-  const filtered = cat
-    ? bookmarks.filter((b) => b.tags.some((t) => t.categoryId === cat))
-    : bookmarks;
+  // Predefined tag options (counts across all bookmarks), most common first.
+  const tagCounts = new Map<string, number>();
+  for (const b of bookmarks) {
+    for (const t of parseTags(b.pmTags)) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+  }
+  const tagOptions: TagOption[] = [...tagCounts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, 24);
 
-  const cards: CardData[] = filtered.map((b) => {
+  // Apply filters: predefined tag, free-text search, and (legacy) manual category.
+  const ql = q.toLowerCase();
+  const filtered = bookmarks.filter((b) => {
+    if (activeTag && !parseTags(b.pmTags).includes(activeTag)) return false;
+    if (cat && !b.tags.some((t) => t.categoryId === cat)) return false;
+    if (ql && !b.question.toLowerCase().includes(ql)) return false;
+    return true;
+  });
+
+  const ungroupedCount = bookmarks.filter(
+    (b) => !b.seriesId && !b.eventSlug && !b.pmTags,
+  ).length;
+
+  const toCard = (b: BookmarkRow): CardData => {
     const active = new Set(b.tags.map((t) => t.categoryId));
     const rule = (type: string) => b.rules.find((r) => r.type === type);
     const priceRule = rule("price");
     return {
       id: b.id,
       question: b.question,
-      slug: b.slug,
+      slug: b.eventSlug ?? b.slug,
       pmCategory: b.pmCategory,
       endDate: b.endDate ? b.endDate.toISOString() : null,
       note: b.note,
@@ -51,7 +99,70 @@ export default async function Dashboard({
           priceRule?.threshold != null ? Math.round(priceRule.threshold * 100) : null,
       },
     };
+  };
+
+  // Build display entries: a series groups its date-variants; everything else
+  // is a standalone card. Single-member series aren't worth a group.
+  type GroupEntry = {
+    kind: "group";
+    key: string;
+    title: string;
+    recurrence: string | null;
+    rows: BookmarkRow[];
+  };
+  type SingleEntry = { kind: "single"; key: string; row: BookmarkRow };
+  type Entry = GroupEntry | SingleEntry;
+
+  const bySeries = new Map<string, BookmarkRow[]>();
+  const singles: BookmarkRow[] = [];
+  for (const b of filtered) {
+    if (b.seriesId) {
+      const arr = bySeries.get(b.seriesId) ?? [];
+      arr.push(b);
+      bySeries.set(b.seriesId, arr);
+    } else {
+      singles.push(b);
+    }
+  }
+
+  const entries: Entry[] = [];
+  for (const [key, rows] of bySeries) {
+    if (rows.length === 1) {
+      singles.push(rows[0]);
+    } else {
+      entries.push({
+        kind: "group",
+        key,
+        title: rows[0].seriesTitle ?? "Series",
+        recurrence: rows[0].seriesRecurrence,
+        rows,
+      });
+    }
+  }
+  for (const row of singles) entries.push({ kind: "single", key: row.id, row });
+
+  const endMs = (b: BookmarkRow) => b.endDate?.getTime() ?? Number.POSITIVE_INFINITY;
+  const createdMs = (b: BookmarkRow) => b.createdAt.getTime();
+  const entryEnd = (e: Entry) =>
+    e.kind === "single" ? endMs(e.row) : Math.min(...e.rows.map(endMs));
+  const entryCreated = (e: Entry) =>
+    e.kind === "single" ? createdMs(e.row) : Math.max(...e.rows.map(createdMs));
+  const entryTitle = (e: Entry) =>
+    (e.kind === "single" ? e.row.question : e.title).toLowerCase();
+
+  entries.sort((a, b) => {
+    if (sort === "recent") return entryCreated(b) - entryCreated(a);
+    if (sort === "az") return entryTitle(a).localeCompare(entryTitle(b));
+    return entryEnd(a) - entryEnd(b); // "ending"
   });
+
+  // Sort variants inside a group by their own end date.
+  for (const e of entries) {
+    if (e.kind === "group") e.rows.sort((x, y) => endMs(x) - endMs(y));
+  }
+
+  const fmtDate = (d: Date | null) =>
+    d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
 
   return (
     <div className="space-y-6">
@@ -63,50 +174,79 @@ export default async function Dashboard({
       </div>
 
       <ImportBox />
+      <BackfillButton pending={ungroupedCount} />
 
-      <CreateCategory />
+      <DashboardControls tags={tagOptions} q={q} activeTag={activeTag} sort={sort} />
 
-      {categories.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 text-xs">
-          <Link
-            href="/"
-            className={`rounded-full border px-2 py-0.5 ${
-              !cat ? "border-neutral-300 text-neutral-100" : "border-neutral-700 text-neutral-500"
-            }`}
-          >
-            All ({bookmarks.length})
-          </Link>
-          {categories.map((c) => (
-            <Link
-              key={c.id}
-              href={`/?cat=${c.id}`}
-              className={`rounded-full border px-2 py-0.5 ${
-                cat === c.id
-                  ? "border-emerald-500 text-emerald-300"
-                  : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
-              }`}
-            >
-              {c.name}
-            </Link>
-          ))}
-        </div>
-      )}
-
-      {cards.length === 0 ? (
+      {entries.length === 0 ? (
         <p className="text-sm text-neutral-400">
-          No bookmarks yet.{" "}
-          <Link href="/search" className="underline">
-            Find some markets
-          </Link>{" "}
-          to track.
+          {bookmarks.length === 0 ? (
+            <>
+              No bookmarks yet.{" "}
+              <Link href="/search" className="underline">
+                Find some markets
+              </Link>{" "}
+              to track.
+            </>
+          ) : (
+            "No markets match these filters."
+          )}
         </p>
       ) : (
         <ul className="space-y-3">
-          {cards.map((c) => (
-            <BookmarkCard key={c.id} data={c} />
-          ))}
+          {entries.map((e) =>
+            e.kind === "group" ? (
+              <SeriesGroup
+                key={e.key}
+                title={e.title}
+                recurrence={e.recurrence}
+                count={e.rows.length}
+                summary={`next ends ${fmtDate(e.rows[0].endDate)}`}
+              >
+                {e.rows.map((row) => (
+                  <BookmarkCard key={row.id} data={toCard(row)} />
+                ))}
+              </SeriesGroup>
+            ) : (
+              <BookmarkCard key={e.key} data={toCard(e.row)} />
+            ),
+          )}
         </ul>
       )}
+
+      <details className="text-sm text-neutral-500">
+        <summary className="cursor-pointer hover:text-neutral-300">
+          Manual labels (optional)
+        </summary>
+        <div className="mt-3 space-y-3">
+          <CreateCategory />
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              <Link
+                href="/"
+                className={`rounded-full border px-2 py-0.5 ${
+                  !cat ? "border-neutral-300 text-neutral-100" : "border-neutral-700 text-neutral-500"
+                }`}
+              >
+                All
+              </Link>
+              {categories.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/?cat=${c.id}`}
+                  className={`rounded-full border px-2 py-0.5 ${
+                    cat === c.id
+                      ? "border-emerald-500 text-emerald-300"
+                      : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
+                  }`}
+                >
+                  {c.name}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

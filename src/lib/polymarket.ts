@@ -24,6 +24,17 @@ export interface GammaMarket {
   outcomePrices?: string;
 }
 
+/** Automatic grouping/category info derived from a market's Gamma event. */
+export interface MarketGrouping {
+  seriesId: string | null;
+  seriesTitle: string | null;
+  seriesRecurrence: string | null;
+  eventSlug: string | null;
+  eventTitle: string | null;
+  /** Predefined Polymarket tag labels, e.g. ["Crypto","Bitcoin"]. */
+  tags: string[];
+}
+
 /** Normalized market for app use. */
 export interface Market {
   id: string;
@@ -34,6 +45,8 @@ export interface Market {
   closed: boolean;
   volume: number;
   outcomes: { name: string; price: number }[];
+  /** Present when the market was resolved with its event context. */
+  grouping?: MarketGrouping;
 }
 
 function toNumber(v: unknown): number {
@@ -147,12 +160,84 @@ export async function getMarket(id: string): Promise<Market | null> {
   return normalizeMarket(data);
 }
 
+interface GammaSeries {
+  id: string;
+  title?: string;
+  slug?: string;
+  recurrence?: string;
+}
+
+interface GammaTag {
+  id?: string;
+  label?: string;
+  slug?: string;
+}
+
 /** A Gamma event groups one or more markets (a Polymarket /event/<slug> URL). */
 interface GammaEvent {
   id: string;
   slug: string;
   title?: string;
   markets?: GammaMarket[];
+  series?: GammaSeries[];
+  tags?: GammaTag[];
+}
+
+/** A Gamma market enriched with its parent event(s) and tags (include_tag=true). */
+interface GammaMarketWithEvent extends GammaMarket {
+  events?: GammaEvent[];
+  tags?: GammaTag[];
+}
+
+function tagLabels(tags: GammaTag[] | undefined): string[] {
+  if (!tags) return [];
+  // Drop Polymarket's internal housekeeping tags so the category filter stays clean.
+  const HIDDEN = new Set(["hide from new", "recurring"]);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    const label = t.label?.trim();
+    if (!label || HIDDEN.has(label.toLowerCase()) || seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/** Build grouping info from an event object and (optionally) market-level tags. */
+function groupingFromEvent(
+  event: GammaEvent | undefined,
+  marketTags?: GammaTag[],
+): MarketGrouping {
+  const series = event?.series?.[0];
+  // Prefer market-level tags (richer), fall back to the event's tags.
+  const tags = tagLabels(marketTags && marketTags.length ? marketTags : event?.tags);
+  return {
+    seriesId: series?.id ?? null,
+    seriesTitle: series?.title ?? null,
+    seriesRecurrence: series?.recurrence ?? null,
+    eventSlug: event?.slug ?? null,
+    eventTitle: event?.title ?? null,
+    tags,
+  };
+}
+
+/**
+ * Fetch a single market by id, enriched with its event/series/tags.
+ * Used by backfill and the worker refresh, where only a market id is known.
+ * (The plain `/markets/{id}` endpoint omits events/tags, so we use the list
+ * endpoint with `include_tag=true`, which hydrates them.)
+ */
+export async function getMarketWithGrouping(id: string): Promise<Market | null> {
+  const data = (await gammaFetch("/markets", {
+    id,
+    include_tag: true,
+  })) as GammaMarketWithEvent[] | null;
+  const raw = Array.isArray(data) ? data[0] : null;
+  if (!raw || !raw.id) return null;
+  const market = normalizeMarket(raw);
+  market.grouping = groupingFromEvent(raw.events?.[0], raw.tags);
+  return market;
 }
 
 /**
@@ -179,13 +264,27 @@ export function parseSlug(input: string): string | null {
  * (returns every market contained in that event).
  */
 export async function resolveSlugToMarkets(slug: string): Promise<Market[]> {
+  // Prefer the event endpoint: it returns the event's series + tags, so we can
+  // capture grouping for every contained market in a single request.
+  const asEvent = (await gammaFetch("/events", { slug })) as GammaEvent[];
+  if (Array.isArray(asEvent) && asEvent.length > 0 && asEvent[0].markets?.length) {
+    const event = asEvent[0];
+    const grouping = groupingFromEvent(event);
+    return event.markets!.map((m) => {
+      const nm = normalizeMarket(m);
+      nm.grouping = grouping;
+      return nm;
+    });
+  }
+  // Fall back to a bare market slug; enrich each by id to capture grouping.
   const asMarket = (await gammaFetch("/markets", { slug })) as GammaMarket[];
   if (Array.isArray(asMarket) && asMarket.length > 0) {
-    return asMarket.map(normalizeMarket);
-  }
-  const asEvent = (await gammaFetch("/events", { slug })) as GammaEvent[];
-  if (Array.isArray(asEvent) && asEvent.length > 0 && asEvent[0].markets) {
-    return asEvent[0].markets.map(normalizeMarket);
+    return Promise.all(
+      asMarket.map(async (m) => {
+        const enriched = await getMarketWithGrouping(String(m.id));
+        return enriched ?? normalizeMarket(m);
+      }),
+    );
   }
   return [];
 }

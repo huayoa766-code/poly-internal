@@ -2,10 +2,31 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getMarket, parseSlug, resolveSlugToMarkets, type Market } from "@/lib/polymarket";
+import {
+  getMarketWithGrouping,
+  parseSlug,
+  resolveSlugToMarkets,
+  type Market,
+} from "@/lib/polymarket";
+
+/** Map a market's optional grouping into the columns we persist. */
+function groupingFields(market: Market) {
+  const g = market.grouping;
+  return {
+    seriesId: g?.seriesId ?? null,
+    seriesTitle: g?.seriesTitle ?? null,
+    seriesRecurrence: g?.seriesRecurrence ?? null,
+    eventSlug: g?.eventSlug ?? null,
+    eventTitle: g?.eventTitle ?? null,
+    pmTags: g ? JSON.stringify(g.tags) : null,
+  };
+}
 
 /** Bookmark a market (idempotent on marketId). Also records an initial snapshot. */
 export async function addBookmark(market: Market) {
+  // Only overwrite grouping columns when we actually resolved grouping, so a
+  // bare refresh (no event context) can't wipe previously-captured values.
+  const grouping = market.grouping ? groupingFields(market) : {};
   const bookmark = await prisma.bookmark.upsert({
     where: { marketId: market.id },
     update: {
@@ -15,6 +36,7 @@ export async function addBookmark(market: Market) {
       endDate: market.endDate ? new Date(market.endDate) : null,
       outcomes: JSON.stringify(market.outcomes),
       closed: market.closed,
+      ...grouping,
     },
     create: {
       marketId: market.id,
@@ -24,6 +46,7 @@ export async function addBookmark(market: Market) {
       endDate: market.endDate ? new Date(market.endDate) : null,
       outcomes: JSON.stringify(market.outcomes),
       closed: market.closed,
+      ...groupingFields(market),
     },
   });
 
@@ -145,11 +168,47 @@ export async function importByText(text: string): Promise<ImportResult> {
   return result;
 }
 
-/** Pull latest market data for a bookmark on demand. */
+/** Pull latest market data for a bookmark on demand (incl. grouping/tags). */
 export async function refreshBookmark(bookmarkId: string) {
   const bm = await prisma.bookmark.findUnique({ where: { id: bookmarkId } });
   if (!bm) return;
-  const market = await getMarket(bm.marketId);
+  const market = await getMarketWithGrouping(bm.marketId);
   if (!market) return;
   await addBookmark(market); // upsert + snapshot
+}
+
+export interface BackfillResult {
+  scanned: number;
+  updated: number;
+  failed: number;
+}
+
+/**
+ * One-time (re-runnable) pass that fills in series/event/tag grouping for
+ * bookmarks created before grouping existed. Re-fetches each from Gamma.
+ */
+export async function backfillGrouping(): Promise<BackfillResult> {
+  const bookmarks = await prisma.bookmark.findMany({
+    where: { seriesId: null, eventSlug: null, pmTags: null },
+    select: { id: true, marketId: true },
+  });
+  const result: BackfillResult = { scanned: bookmarks.length, updated: 0, failed: 0 };
+  for (const bm of bookmarks) {
+    try {
+      const market = await getMarketWithGrouping(bm.marketId);
+      if (!market?.grouping) {
+        result.failed += 1;
+        continue;
+      }
+      await prisma.bookmark.update({
+        where: { id: bm.id },
+        data: groupingFields(market),
+      });
+      result.updated += 1;
+    } catch {
+      result.failed += 1;
+    }
+  }
+  revalidatePath("/");
+  return result;
 }

@@ -23,6 +23,20 @@ model Bookmark {
   outcomes   String?
   note       String?
   closed     Boolean  @default(false)
+
+  // --- Automatic grouping/categorization captured from Polymarket (Gamma) ---
+  // A "series" links recurring date-variants of the same market, e.g.
+  // "Bitcoin above __ on Jun 29 / Jun 30 / Jul 3" all share one series.
+  seriesId         String? // Gamma series id (stable group key)
+  seriesTitle      String? // e.g. "BTC Multi Strikes Weekly"
+  seriesRecurrence String? // "daily" | "weekly" | "monthly" | ...
+  // The Gamma event this market belongs to (polymarket.com/event/<slug>).
+  eventSlug        String?
+  eventTitle       String?
+  // JSON array of predefined Polymarket tag labels, e.g. ["Crypto","Bitcoin"].
+  // Drives the predefined category filter — no manual tagging needed.
+  pmTags           String?
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -31,6 +45,7 @@ model Bookmark {
   rules     AlertRule[]
 
   @@index([endDate])
+  @@index([seriesId])
 }
 
 /// User-defined label (news topic / category) for organizing bookmarks.
